@@ -9,8 +9,7 @@
   <meta name="author" content="Tong Shen">
 
   
-  <meta name="description" content="当你的jsp中有如下标签引用时报错 &lt;%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core" %&gt;
-&lt;c:set var="pageTitle" scope="request" value="myTestPage &hellip;">
+  <meta name="description" content="BEAN VALIDATION: INTEGRATING JSR-303 WITH SPRING Spring 3.1 and 之后都对constraints支持。 据说除了spring MVC 还支持对 Hibernate 的储存对象进行校验，下面的例子中有引用到hibernate。 &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -66,6 +65,173 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2015/03/03/zai-spring-zhong-shi-yong-constraints-validation/">Zai Spring Zhong Shi Yong Constraints Validation</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2015-03-03T00:00:00+08:00'><span class='date'><span class='date-month'>Mar</span> <span class='date-day'>3</span><span class='date-suffix'>rd</span>, <span class='date-year'>2015</span></span> <span class='time'>12:00 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><h2>BEAN VALIDATION: INTEGRATING JSR-303 WITH SPRING</h2>
+
+<p>Spring 3.1 and 之后都对constraints支持。</p>
+
+<p>据说除了spring MVC 还支持对 Hibernate 的储存对象进行校验，下面的例子中有引用到hibernate。</p>
+
+<p>目前使用了constraints对 Spring mvc 中controller 接收到的 request 进行校验。</p>
+
+<p>可以对需要校验的内容加相应的 annotation，例子如下：</p>
+
+<pre><code>import org.hibernate.validator.constraints.NotBlank;
+
+import javax.validation.constraints.Pattern;
+import javax.validation.constraints.Size;
+
+public class ExampleRequest {
+    @Pattern(regexp="[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,4}", message="username_invalid") //使用正则，如果不符合该正则表达式则返回相应的“username_invalid”
+    @NotBlank(message = "username_blank")
+    private String username;
+
+    @NotBlank(message = "password_not_enter")//如果password为空则返回错误信息，相应的还有@Null这个注解，则是当这项为 null pointer 时被触发
+    @Pattern(regexp = "(?=.*(\\d|[A-Z]))[a-zA-Z0-9.-_]{8,16}", message = "password_invalid")
+    private String password;
+
+    @NotBlank(message = "first_name_not_entered")
+    @Size(min = 1, message = "first_name_too_short")
+    private String firstName;
+
+    @NotBlank(message = "last_name_not_entered")
+    @Size(min = 2, message = "last_name_too_short")
+    private String lastName;
+
+    @Pattern(regexp="04[0-9]{8}|\\+614[0-9]{8}|614[0-9]{8}|^$", message="contact_number_invalid")
+    private String contactNumber
+}
+</code></pre>
+
+<p>在controller中要如何处理是否有不合法的参数呢~</p>
+
+<pre><code>import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Controller;
+import org.springframework.validation.BindingResult;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.ResponseBody;
+
+import javax.validation.Valid;
+
+
+@Controller
+public class ExampleController {
+private Validation validation;
+
+@RequestMapping(value = "/example", method = RequestMethod.POST)
+@ResponseBody
+public ResponseEntity&lt;Response&gt; exampleMethod(@Valid @RequestBody ExampleRequest request, BindingResult result) {
+    validation = new Validation();
+    Response response = new Response();
+    if (validation.validRequest(request, result, response)) {
+        return new ResponseEntity&lt;Response&gt;(response, HttpStatus.NOT_ACCEPTABLE);
+    }
+    return new ResponseEntity&lt;Response&gt;(response, HttpStatus.OK);
+}
+}
+</code></pre>
+
+<p>为了使 controller 看起来清晰一点，validation 的过程我们写在另一个类 Validation 中。</p>
+
+<p>在上面例子中参数 request 被两个注解修饰，@Valid 表示这个参数要接受制约（也就是我们在ExampleRequest类中所加的注解，@RequestBody 表示这个参数是由post请求传过来的一个Request）。</p>
+
+<p>而校验结果就会存在于BindingResult 类型的参数 result 中。</p>
+
+<p>HttpStatus是Springframework自带的，我这里用的HttpStatus.NOT_ACCEPTABLE 的 code 是 406。</p>
+
+<p>Validation的代码如下，就是如何判断request被校验的情况。</p>
+
+<pre><code>import com.google.common.base.Predicate;
+import com.google.common.collect.Collections2;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.validation.BindingResult;
+import org.springframework.validation.ObjectError;
+
+import java.util.Collection;
+import java.util.List;
+
+public class Validation {
+
+public boolean validRequest(Request request, BindingResult result, Response response) {
+    if (result.hasErrors()) {
+        List&lt;ObjectError&gt; allErrors = result.getAllErrors();
+        response.setError_description(allErrors.get(0).getDefaultMessage());
+        Predicate&lt;ObjectError&gt; predicate = getObjectErrorPredicate();
+        Collection&lt;ObjectError&gt; blankErrors = Collections2.filter(allErrors, predicate);
+        if (blankErrors.size() &gt; 0) {                response.setError_description(blankErrors.iterator().next().getDefaultMessage());
+        }
+        return true;
+    }
+        return false;
+}
+
+public Predicate&lt;ObjectError&gt; getObjectErrorPredicate() {
+    return new Predicate&lt;ObjectError&gt;() {
+        @Override
+        public boolean apply(ObjectError input) {
+            return StringUtils.equals(input.getCode(), NOT_BLANK);
+        }
+    };
+}
+}
+</code></pre>
+
+<p>如果存在校验失败，则result中将存在error，则result.hasErrors()为true,</p>
+
+<p>然后发现如果同时存在正则校验和非空校验，同时正则不能匹配空值，那么空值时，result.getAllErrors();会拿到一个长度为2的list，而哪一个error在前哪一个在后是随机的，所以额外加了判断。</p>
+
+<p>其中 Predicate 和 Collections2 是 guava 用来做集合处理的，可以用来省去写循环去遍历这个list。</p>
+
+<hr />
+
+<p>constraints 的注解还有很多</p>
+
+<ul>
+<li><p>@Null             验证对象是否为空</p></li>
+<li><p>@NotNull  验证对象是否为非空</p></li>
+<li><p>@AssertTrue   验证 Boolean 对象是否为 true</p></li>
+<li>@AssertFalse  验证 Boolean 对象是否为 false</li>
+<li>@Min          验证 Number 和 String 对象是否大等于指定的值</li>
+<li>@Max          验证 Number 和 String 对象是否小等于指定的值</li>
+<li>@DecimalMin   验证 Number 和 String 对象是否大等于指定的值，小数存在精度</li>
+<li>@DecimalMax   验证 Number 和 String 对象是否小等于指定的值，小数存在精度</li>
+<li>@Size             验证对象（Array,Collection,Map,String）长度是否在给定的范围之内-</li>
+<li>@Digits   验证 Number 和 String 的构成是否合法</li>
+<li>@Past             验证 Date 和 Calendar 对象是否在当前时间之前</li>
+<li>@Future   验证 Date 和 Calendar 对象是否在当前时间之后</li>
+<li>@Pattern  验证 String 对象是否符合正则表达式的规则</li>
+</ul>
+
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -130,6 +296,10 @@
   <ul id="recent_posts">
     
       <li class="post">
+        <a href="/blog/2015/03/03/zai-spring-zhong-shi-yong-constraints-validation/">Zai Spring Zhong Shi Yong Constraints Validation</a>
+      </li>
+    
+      <li class="post">
         <a href="/blog/2014/11/17/zai-spring-zhong-shi-yong-jspyu-dao-de-%5B%3F%5D-xie-wen-ti/">在spring 中使用jsp遇到的一些问题</a>
       </li>
     
@@ -146,7 +316,7 @@
     </div>
   </div>
   <footer role="contentinfo"><p>
-  Copyright &copy; 2014 - Tong Shen -
+  Copyright &copy; 2015 - Tong Shen -
   <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
 </p>
 
